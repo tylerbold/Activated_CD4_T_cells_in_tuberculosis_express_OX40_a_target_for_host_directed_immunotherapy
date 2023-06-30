@@ -1,2 +1,2 @@
-# Activated mouse T cells in TB scRNA-Seq
+# Activated mouse T cells in TB scRNA-Seq Figure 3
 scRNA-Seq analysis scripts for Nur77-GFP T cell analysis in tuberculosis mouse model
