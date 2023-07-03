@@ -1,0 +1,238 @@
+---
+title: "Nur77-GFP LO/HI scRNA-seq"
+output: html_notebook
+---
+
+
+Load libraries
+```{r}
+library(ggplot2)
+library(scRepertoire)
+library(Seurat)
+library(dplyr)
+library(patchwork)
+library(sctransform)
+library(Nebulosa)
+library(djvdj)
+library(stringr)
+```
+
+Read in gene expression (GEX) and feature barcode (FBT) data
+```{r}
+S3_GEX_FBT.data <- Read10X(data.dir = "Bold_004_S3_GFP_sample_feature_bc_matrix")
+
+S4_GEX_FBT.data <- Read10X(data.dir = "Bold_004_S4_GFP_sample_feature_bc_matrix")
+```
+
+Create GEX and FBT objects for Seurat analysis
+```{r}
+S3_GEX_FBT <- CreateSeuratObject(counts = S3_GEX_FBT.data$'Gene Expression')
+S3_adt_assay <- CreateAssayObject(counts = S3_GEX_FBT.data$'Antibody Capture')
+S3_GEX_FBT[["ADT"]] <- S3_adt_assay
+
+S4_GEX_FBT <- CreateSeuratObject(counts = S4_GEX_FBT.data$'Gene Expression')
+S4_adt_assay <- CreateAssayObject(counts = S4_GEX_FBT.data$'Antibody Capture')
+S4_GEX_FBT[["ADT"]] <- S4_adt_assay
+```
+
+Stash mitochondrial and ribosomal read percentages
+```{r}
+S3_GEX_FBT[["percent.mt"]] <- PercentageFeatureSet(S3_GEX_FBT, pattern = "^mt-")
+S3_GEX_FBT[["percent.ribo"]] <- PercentageFeatureSet(S3_GEX_FBT, pattern = "^Rp[s1]")
+
+S4_GEX_FBT[["percent.mt"]] <- PercentageFeatureSet(S4_GEX_FBT, pattern = "^mt-")
+S4_GEX_FBT[["percent.ribo"]] <- PercentageFeatureSet(S4_GEX_FBT, pattern = "^Rp[s1]")
+```
+
+Filter cells by total reads, mitochondrial reads, ribosomal reads, and CD3 expression
+```{r}
+CD3_S3_GEX_FBT <- subset(S3_GEX_FBT, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 10 & percent.ribo < 20 & Cd3e >2)
+
+CD3_S4_GEX_FBT <- subset(S4_GEX_FBT, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 10 & percent.ribo < 20 & Cd3e >2)
+```
+
+Normalize data and regress mitochondrial reads
+```{r}
+CD3_S3_GEX_FBT <- SCTransform(CD3_S3_GEX_FBT, vars.to.regress = c("percent.mt"), verbose=FALSE)
+
+CD3_S4_GEX_FBT <- SCTransform(CD3_S4_GEX_FBT, vars.to.regress = c("percent.mt"), verbose=FALSE)
+```
+
+Run dimensionality reductions (PCA and UMAP)
+```{r}
+CD3_S3_GEX_FBT <- RunPCA(CD3_S3_GEX_FBT, verbose=FALSE)
+CD3_S3_GEX_FBT <- RunUMAP(CD3_S3_GEX_FBT, reduction = "pca", dims = 1:30)
+
+CD3_S4_GEX_FBT <- RunPCA(CD3_S4_GEX_FBT, verbose=FALSE)
+CD3_S4_GEX_FBT <- RunUMAP(CD3_S4_GEX_FBT, reduction = "pca", dims = 1:30)
+```
+
+Rename GEX/FBT cell barcodes to enable matching with T cell receptor sequencing (TCR) data
+```{r}
+CD3_S3_GEX_FBT <- RenameCells(CD3_S3_GEX_FBT, add.cell.id = "M1_GFPhi")
+
+CD3_S4_GEX_FBT <- RenameCells(CD3_S4_GEX_FBT, add.cell.id = "M1_GFPlo")
+```
+
+Read in TCR clonotype data
+```{r}
+S3_clones <- read.csv("S3_filtered_contig_annotations.csv")
+S4_clones <- read.csv("S4_filtered_contig_annotations.csv")
+```
+
+Label TCR cells as alpha-beta T cells and rename to match GEX/FBT barcodes
+```{r}
+S3_TCR_combined <- combineTCR(S3_clones, samples = c("M1"), ID = c("GFPhi"), cells = "T-AB", removeNA = TRUE, filterMulti = TRUE)
+
+S4_TCR_combined <- combineTCR(S4_clones, samples = c("M1"), ID = c("GFPlo"), cells = "T-AB", removeNA = TRUE, filterMulti = TRUE)
+```
+
+Combine GFP HI and LO TCR objects
+```{r}
+S3_S4_contig_combined <- (list(S3_clones, S4_clones))
+
+S3_S4_TCR_combined <- combineTCR(S3_S4_contig_combined, samples = c("M1", "M1"), ID = c("GFPhi", "GFPlo"), cells = "T-AB", removeNA = TRUE, filterMulti = TRUE)
+```
+
+Combine TCR and GEX/FBT objects
+```{r}
+CD3_S3_GEX_FBT_TCR <- combineExpression(S3_TCR_combined, CD3_S3_GEX_FBT, cloneCall = "gene", proportion = FALSE, cloneTypes = c(Single=1, Small=5, Medium=2, Large=100, Hyperexpanded=500))
+
+CD3_S4_GEX_FBT_TCR <- combineExpression(S4_TCR_combined, CD3_S4_GEX_FBT, cloneCall = "gene", proportion = FALSE, cloneTypes = c(Single=1, Small=5, Medium=2, Large=100, Hyperexpanded=500))
+```
+
+Find cell neighbors and clusters in combined GEX/FBT/TCR object
+```{r}
+CD3_S3_GEX_FBT_TCR <- FindNeighbors(CD3_S3_GEX_FBT_TCR, dims = 1:30, verbose = FALSE)
+CD3_S3_GEX_FBT_TCR <- FindClusters(CD3_S3_GEX_FBT_TCR, verbose = FALSE, resolution = 0.3)
+
+CD3_S4_GEX_FBT_TCR <- FindNeighbors(CD3_S4_GEX_FBT_TCR, dims = 1:30, verbose = FALSE)
+CD3_S4_GEX_FBT_TCR <- FindClusters(CD3_S4_GEX_FBT_TCR, verbose = FALSE, resolution = 0.25)
+```
+
+Name and organize UMAP cell cluster legends
+```{r}
+levels(CD3_S4_GEX_FBT_TCR)
+levels(x = CD3_S4_GEX_FBT_TCR) <- c("0", "1", "3", "2", "4")
+
+S3.cluster.ids <- c("Parenchymal Tconv effector cells 1", "Parenchymal Tconv effector cells 2", "Parenchymal Tconv effector cells 3", "Vascular differentiated cytotoxic T cells", "Tregs", "Proliferating cells")
+S4.cluster.ids <- c("Parenchymal Tconv effector cells 1", "Parenchymal Tconv effector cells 2", "Vascular differentiated cytotoxic T cells", "Parenchymal Tconv effector cells 3", "Proliferating cells")
+
+names(S3.cluster.ids) <- levels(CD3_S3_GEX_FBT_TCR)
+CD3_S3_GEX_FBT_TCR <- RenameIdents(CD3_S3_GEX_FBT_TCR, S3.cluster.ids)
+
+names(S4.cluster.ids) <- levels(CD3_S4_GEX_FBT_TCR)
+CD3_S4_GEX_FBT_TCR <- RenameIdents(CD3_S4_GEX_FBT_TCR, S4.cluster.ids)
+
+levels(CD3_S4_GEX_FBT_TCR)
+levels(x = CD3_S4_GEX_FBT_TCR) <- c("Parenchymal Tconv effector cells 1", "Parenchymal Tconv effector cells 2", "Parenchymal Tconv effector cells 3", "Vascular differentiated cytotoxic T cells", "Proliferating cells")
+```
+
+Change UMAP cell cluster colors
+```{r}
+S3_col <- c("#008000", "#00CCFF", "#FF00FF", "#0000CD", "#A0522D", "#FF9933")
+S4_col <- c("#008000", "#00CCFF", "#FF00FF", "#0000CD", "#FF9933")
+```
+
+Plot Figure 3A (GFP HI and LO UMAPs)
+```{r}
+DimPlot(CD3_S3_GEX_FBT_TCR, reduction = "umap", pt.size = 1.5, cols = S3_col)
+DimPlot(CD3_S4_GEX_FBT_TCR, reduction = "umap", pt.size = 1.5, cols = S4_col)
+```
+
+Plot Figure 3B (GFP HI and LO feature plots)
+```{r}
+FeaturePlot(CD3_S3_GEX_FBT_TCR, features = c("Cx3cr1", "Tnfrsf4", "Foxp3", "Mki67", "Il21", "Gzma", "S1pr5", "Total-Seq-IV-HTO"), order = TRUE, pt.size = 1.8, raster=FALSE, cols = c("gray80", "darkblue"))
+
+FeaturePlot(CD3_S4_GEX_FBT_TCR, features = c("Cx3cr1", "Tnfrsf4", "Foxp3", "Mki67", "Il21", "Gzma", "S1pr5", "Total-Seq-IV-HTO"), order = TRUE, pt.size = 1.8, raster=FALSE, cols = c("gray80", "darkblue"))
+```
+
+Plot Figure 3C (GFP HI and LO dot plots)
+```{r}
+DotPlot(CD3_S3_GEX_FBT_TCR, features = c("Ifng", "Tnf", "Il10", "Il17a", "Tnfrsf4", "Tnfsf8", "Tnfrsf18", "Tnfrsf9", "Cd40lg", "Lag3", "Pdcd1", "Ctla4", "Havcr2", "Itga4", "Itgb1", "Cxcr6", "Ccr7", "Cxcr3", "Cx3cr1", "S1pr5"), cols = c("gray80", "darkblue"), col.min = -2, col.max = 2) + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_y_discrete(limits=rev)
+
+DotPlot(CD3_S4_GEX_FBT_TCR, features = c("Ifng", "Tnf", "Il10", "Il17a", "Tnfrsf4", "Tnfsf8", "Tnfrsf18", "Tnfrsf9", "Cd40lg", "Lag3", "Pdcd1", "Ctla4", "Havcr2", "Itga4", "Itgb1", "Cxcr6", "Ccr7", "Cxcr3", "Cx3cr1", "S1pr5"), cols = c("gray80", "darkblue"), col.min = -2, col.max = 2) + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_y_discrete(limits=rev)
+```
+
+Generate cell counts needed to generate Figure 3D (GFP HI and LO gene expression frequencies)
+```{r}
+table(Idents(CD3_S3_GEX_FBT_TCR))
+table(Idents(CD3_S4_GEX_FBT_TCR))
+
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Ifng",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Tnf",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Il10",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Il17a",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Tnfrsf4",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Tnfsf8",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Tnfrsf18",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Tnfrsf9",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Cd40lg",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Lag3",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Pdcd1",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Ctla4",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Havcr2",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Itga4",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Itgb1",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Cxcr6",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Ccr7",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Cxcr3",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["Cx3cr1",]>0)
+sum(GetAssayData(object = CD3_S3_GEX_FBT_TCR, slot = "data")["S1pr5",]>0)
+
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Ifng",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Tnf",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Il10",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Il17a",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Tnfrsf4",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Tnfsf8",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Tnfrsf18",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Tnfrsf9",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Cd40lg",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Lag3",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Pdcd1",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Ctla4",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Havcr2",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Itga4",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Itgb1",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Cxcr6",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Ccr7",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Cxcr3",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["Cx3cr1",]>0)
+sum(GetAssayData(object = CD3_S4_GEX_FBT_TCR, slot = "data")["S1pr5",]>0)
+```
+
+Plot Figure 4A (top 10 expressed TCR clonotype proportions)
+```{r}
+compareClonotypes(S3_S4_TCR_combined, numbers = 14, cloneCall="aa", graph = "alluvial") +
+  scale_x_discrete(limits=rev)
+```
+
+Plot Figure 4B (TCR clonotype feature plots)
+```{r}
+S3_clone1 <- highlightClonotypes(CD3_S3_GEX_FBT_TCR, cloneCall = "aa", sequence = c("CANTNTGKLTF_CASRSGSQNTLYF"))
+S3_clone3 <- highlightClonotypes(CD3_S3_GEX_FBT_TCR, cloneCall = "aa", sequence = c("CAMGAGGYKVVF_CGAKTGTGGNTLYF"))
+S3_clone2 <- highlightClonotypes(CD3_S3_GEX_FBT_TCR, cloneCall = "aa", sequence = c("CAMNSNYQLIW_CGAREGSNQAPLF"))
+
+S4_clone1 <- highlightClonotypes(CD3_S4_GEX_FBT_TCR, cloneCall = "aa", sequence = c("CANTNTGKLTF_CASRSGSQNTLYF"))
+S4_clone3 <- highlightClonotypes(CD3_S4_GEX_FBT_TCR, cloneCall = "aa", sequence = c("CAMGAGGYKVVF_CGAKTGTGGNTLYF"))
+S4_clone2 <- highlightClonotypes(CD3_S4_GEX_FBT_TCR, cloneCall = "aa", sequence = c("CAMNSNYQLIW_CGAREGSNQAPLF"))
+
+DimPlot(S3_clone1, group.by = "highlight", pt.size = 2.2, order = TRUE, cols = "red", na.value = "darkgrey")
+DimPlot(S3_clone2, group.by = "highlight", pt.size = 2.2, order = TRUE, cols = "red", na.value= "darkgrey")
+DimPlot(S3_clone3, group.by = "highlight", pt.size = 2.2, order = TRUE, cols = "red", na.value = "darkgrey")
+DimPlot(S4_clone1, group.by = "highlight", pt.size = 2.2, order = TRUE, cols = "red", na.value = "darkgrey")
+DimPlot(S4_clone2, group.by = "highlight", pt.size = 2.2, order = TRUE, cols = "red", na.value = "darkgrey")
+DimPlot(S4_clone3, group.by = "highlight", pt.size = 2.2, order = TRUE, cols = "red", na.value = "darkgrey")
+```
+
+Plot Figure 4C (TCR clonotype scatter plot)
+```{r}
+scatterClonotype(S3_S4_TCR_combined, x.axis = "M1_GFPlo", y.axis = "M1_GFPhi", cloneCall = "aa", graph = "proportion", dot.size = "total") +
+  scale_color_manual(values = c("darkblue", "darkorange1", "darkorchid1", "magenta", "red"))
+```
+
