@@ -1,0 +1,122 @@
+---
+title: "Nur77 GFP tetramer enriched scRNAseq"
+output: html_notebook
+---
+
+Load libraries:
+```{r}
+library(devtools)
+library(remotes)
+library(BiocManager)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+```
+
+Read in gene expression (GEX) data
+```{r}
+set.integrated <- readRDS("s2-4all.integrated.rds")
+```
+
+Select for CD3+ cells:
+```{r}
+FeaturePlot(set.integrated, features = c("Cd3e"))
+DefaultAssay(set.integrated) <- "RNA"
+set.integrated <- NormalizeData(set.integrated, verbose = FALSE)
+
+FeaturePlot(set.integrated, features = c("Cd3e"), label=TRUE)
+cd3.integrated <- subset(x = set.integrated, idents = c('1', '7', '12', '16','17')) 
+
+DimPlot(cd3.integrated, label = TRUE) + 
+  NoLegend()
+
+DefaultAssay(cd3.integrated) <- "integrated"  
+cd3.integrated <- FindNeighbors(cd3.integrated, dims = 1:30, verbose = FALSE)
+cd3.integrated <- FindClusters(cd3.integrated, verbose = FALSE)
+cd3.integrated <- RunUMAP(cd3.integrated, dims = 1:30, verbose = FALSE)
+
+saveRDS(cd3.integrated, file = 'cd3.integrated.RDS')
+
+DimPlot(cd3.integrated, label = TRUE) + 
+  ggtitle("Clustering by CD3e") +
+  NoLegend()
+
+DimPlot(cd3.integrated, group.by = "orig.ident", label = FALSE) +
+  ggtitle("CD3e+ clustering by mouse") +
+  NoLegend()
+```
+
+Select for CD4+ cells:
+```{r}
+FeaturePlot(cd3.integrated, features=c("Cd4"), label=TRUE)
+DefaultAssay(cd3.integrated) <- "RNA"
+cd3.integrated <- NormalizeData(cd3.integrated, verbose = FALSE)
+
+FeaturePlot(cd3.integrated, features = c("Cd4"), label=TRUE) +
+  ggtitle("Clustering by CD4")
+cd4.integrated <- subset(x = cd3.integrated, idents = c('0', '1', '2', '3', '4', '9'))
+
+DimPlot(cd4.integrated, label = TRUE) + 
+  NoLegend() +
+  ggtitle("Clustering by CD4")
+
+DefaultAssay(cd4.integrated) <- "integrated"  
+cd4.integrated <- FindNeighbors(cd4.integrated, dims = 1:30, verbose = FALSE)
+cd4.integrated <- FindClusters(cd4.integrated, verbose = FALSE)
+cd4.integrated <- RunUMAP(cd4.integrated, dims = 1:30, verbose = FALSE)
+
+saveRDS(cd4.integrated, file = 'cd4.integrated.RDS')
+
+DimPlot(cd4.integrated, label = TRUE) + 
+  ggtitle("Clustering by CD4")
+
+DimPlot(cd4.integrated, group.by = "orig.ident", label = FALSE) +
+  ggtitle("CD4+ clustering by mouse") +
+  NoLegend()
+```
+
+Change legend order:
+```{r}
+levels(cd4.integrated)
+levels(x = cd4.integrated) <- c("0", "3", "4", "1", "5", "6", "2")
+
+DimPlot(cd4.integrated, reduction = "umap", pt.size = 1.5)
+```
+
+Change cluster labels:
+```{r}
+cd4.cluster.ids <- c("Parenchymal Tconv effector cells 1", "Parenchymal Tconv effector cells 2", "Parenchymal Tconv effector cells 3", "Vascular differentiated cytotoxic T cells", "Proliferating cells", "Naive cells 1", "Naive cells 2")
+
+names(cd4.cluster.ids) <- levels(cd4.integrated)
+cd4.integrated <- RenameIdents(cd4.integrated, cd4.cluster.ids)
+DimPlot(cd4.integrated, reduction = "umap", pt.size = 1.5)
+```
+
+Change cluster colors:
+```{r}
+CD4_col <- c("#008000", "#00CCFF", "#FF00FF", "#0000CD", "#FF9933", "magenta4", "red")
+
+DimPlot(cd4.integrated, reduction = "umap", pt.size = 1.5, cols = CD4_col)
+```
+
+Cluster UMAP edited - export:
+```{r}
+tiff("CD4.UMAP.tiff", units="in", width=9, height=4.5, res=600)
+DimPlot(cd4.integrated, pt.size = 1.2, raster = FALSE, cols = CD4_col)
+dev.off()
+```
+
+Feature plots - export:
+```{r}
+tiff("CD4_features.tiff", units="in", width=19, height=12, res=600)
+FeaturePlot(cd4.integrated, features = c("Tnfrsf4", "Mki67", "Gzma", "Cx3cr1", "Ccr7", "Nkg7", "Ifng", "Nr4a1", "EGFP", "Cd4", "Cd8a", "Ccl5"), order = TRUE, pt.size = 1.2, raster=FALSE, cols = c("gray80", "darkblue"))
+dev.off()
+```
+
+```{r}
+head(cd4.integrated)
+```
+
+
+
+
