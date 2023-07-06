@@ -1,0 +1,139 @@
+
+title: S250_HIV_GEX_TCR
+output: html_notebook
+---
+
+
+```{r}
+library(ggplot2)
+library(scRepertoire)
+library(Seurat)
+library(dplyr)
+library(patchwork)
+library(sctransform)
+library(Nebulosa)
+library(djvdj)
+library(stringr)
+library(RColorBrewer)
+library(Polychrome)
+library(ggpubr)
+library(cowplot)
+```
+```{r}
+set.seed(250)
+```
+
+
+```{r}
+S250_HIV_GEX.data <- Read10X(data.dir = "~/S250_HIV_UG_filtered_feature_bc_matrix")
+```
+
+```{r}
+S250_HIV_GEX <- CreateSeuratObject(counts = S250_HIV_GEX.data)
+```
+
+```{r}
+S250_HIV_GEX[["percent.mt"]] <- PercentageFeatureSet(S250_HIV_GEX, pattern = "^MT-")
+S250_HIV_GEX[["percent.ribo"]] <- PercentageFeatureSet(S250_HIV_GEX, pattern = "^RP[SL]")
+S250_HIV_GEX[["percent.hiv"]] <- PercentageFeatureSet(S250_HIV_GEX, pattern = "^UG-HIV-")
+VlnPlot(S250_HIV_GEX, features = c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent.ribo", "percent.hiv"), ncol = 3)
+```
+
+```{r}
+S250_HIV_GEX <- subset(S250_HIV_GEX, subset = nFeature_RNA > 200 & nFeature_RNA < 3000 & percent.mt < 25 & percent.ribo < 40)
+```
+
+```{r}
+S250_HIV_GEX <- SCTransform(S250_HIV_GEX, vars.to.regress = c("percent.mt", "percent.ribo"), verbose = FALSE)
+```
+
+```{r}
+S250_HIV_GEX <- RunPCA(S250_HIV_GEX, verbose = FALSE)
+S250_HIV_GEX <- RunUMAP(S250_HIV_GEX, reduction = "pca", dims = 1:30)
+```
+
+```{r}
+S250_HIV_GEX <- RenameCells(S250_HIV_GEX, add.cell.id = "S250_HIV")
+```
+
+```{r}
+S250_clones <- read.csv("~/S250_filtered_contig_annotations.csv")
+```
+
+```{r}
+S250_TCR_combined <- combineTCR(S250_clones, samples = c("S250"), ID = c("HIV"), cells ="T-AB", removeNA = TRUE, filterMulti = TRUE)
+```
+
+```{r}
+S250_HIV_GEX_TCR <- combineExpression(S250_TCR_combined, S250_HIV_GEX, cloneCall="gene", proportion = FALSE, cloneTypes=c(Single=1, Small=5, Medium=20, Large=100, Hyperexpanded=500))
+```
+
+```{r}
+S250_HIV_GEX_TCR <- FindNeighbors(S250_HIV_GEX_TCR, dims = 1:30, verbose = FALSE)
+S250_HIV_GEX_TCR <- FindClusters(S250_HIV_GEX_TCR, verbose = FALSE, resolution = c(1.0))
+```
+
+```{r}
+clustree(S250_HIV_GEX_TCR, prefix = "SCT_snn_res.")
+DimPlot(S250_HIV_GEX_TCR)
+```
+
+
+```{r}
+saveRDS(S250_HIV_GEX_TCR, file = "S250_HIV_GEX_TCR_092022.rds")
+```
+
+```{r}
+S250_HIV_GEX_TCR.markers <- FindAllMarkers(S250_HIV_GEX_TCR, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+S250_HIV_GEX_TCR.markers <- S250_HIV_GEX_TCR.markers %>% group_by(cluster)
+write.table(S250_HIV_GEX_TCR.markers, file = "S250_HIV_GEX_TCR.markers.0.8.xls", sep="\t", quote =F)
+```
+
+```{r}
+
+Set1_5_S250 <- c("#E41A1C", "#377EB8", "#A65628", "#984EA3", "#FF7F00")
+```
+
+```{r}
+DimPlot(S250_HIV_GEX_TCR, cols = Set1_5_S250, pt.size = 3)
+ggsave("S250_dimplot.pdf", width = 7, height = 6, device='pdf', dpi=600)
+plot_density(S250_HIV_GEX_TCR, c("CD4", "TNFRSF4", "percent.hiv", "CD8A", "GZMA", "ADAR"), size = 2)
+ggsave("S250_density_plot.pdf", width = 10, height = 6, device='pdf', dpi=600)
+VlnPlot(S250_HIV_GEX_TCR, c("FOS", "GZMA", "MX1", "FOXP3"), cols = Set1_5_S250, ncol = 2)
+ggsave("S250_Vln_plot.pdf", width = 8, height = 6, device='pdf', dpi=600)
+```
+
+```{r}
+names(S250.cluster.ids) <- levels(S250_HIV_GEX_TCR)
+S250_HIV_GEX_TCR <- RenameIdents(S250_HIV_GEX_TCR, S250.cluster.ids)
+DimPlot(S250_HIV_GEX_TCR, reduction = "umap", pt.size = 1.5, cols = Colorblind3S250)
+```
+
+```{r}
+S250_HIV_GEX_TCR_Clusters <- DimPlot(S250_HIV_GEX_TCR, order = TRUE, label.size = 10, pt.size = 2, cols = Set1_3_S250)
+```
+
+```{r}
+S250_HIV_GEX_TCR <- highlightClonotypes(S250_HIV_GEX_TCR, cloneCall= "aa", sequence = c("CAVRAYSGGGADGLTF_CASSLVQSEKLFF", "CVVSDPGSNDYKLSF_CASSSWNIQYF", "CAATDSWGKLQF_CSASQDNSNEQFF", "CVVSDGSTGTASKLTF_CSAPRTSGWGEQFF", "CAVRGESRRALTF_CASVPYESGLAGVGSYDEQFF", "CAVRGSNTGFQKLVF_CASSLKGVGQPQHF"))
+DimPlot(S250_HIV_GEX_TCR, group.by = "highlight", pt.size = 1.5, order = TRUE, cols = c("red","magenta", "darkblue", "chartreuse", "forestgreen", "coral"))
+dev.copy2pdf(file = "S250_clonotypes.pdf", width=6, height=4)
+```
+
+```{r}
+S250_OX40 <- FeaturePlot(S250_HIV_GEX_TCR, "TNFRSF4", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+S250_PD1 <- FeaturePlot(S250_HIV_GEX_TCR, "PDCD1", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+S250_GZMA <- FeaturePlot(S250_HIV_GEX_TCR, "GZMA", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+S250_S1PR5 <- FeaturePlot(S250_HIV_GEX_TCR, "S1PR5", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+S250_CX3CR1 <- FeaturePlot(S250_HIV_GEX_TCR, "CX3CR1", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+S250_CXCR3 <- FeaturePlot(S250_HIV_GEX_TCR, "CXCR3", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+S250_41BB <- FeaturePlot(S250_HIV_GEX_TCR, "TNFRSF9", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+S250_Lag3<- FeaturePlot(S250_HIV_GEX_TCR, "LAG3", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+S250_FOXP3<- FeaturePlot(S250_HIV_GEX_TCR, "FOXP3", order = TRUE, pt.size =1.5, cols = c("lightgrey", "darkblue"))
+```
+
+
+```{r}
+plot_grid(S250_OX40, S250_FOXP3, S250_PD1, S250_GZMA, S250_S1PR5,  nrow = 2)
+dev.copy2pdf(file = "S250FeatPlots1.pdf", width= 20, height=8)
+```
+
